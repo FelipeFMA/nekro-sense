@@ -143,6 +143,11 @@ def cmd_rgb_per_zone(args: argparse.Namespace) -> None:
     print("OK: per-zone colors set")
 
 
+def cmd_rgb_per_zone_get(_: argparse.Namespace) -> None:
+    _require_path(KB_PER_ZONE, "four-zone keyboard per_zone_mode")
+    print(_read_text(KB_PER_ZONE))
+
+
 def cmd_rgb_effect(args: argparse.Namespace) -> None:
     _require_path(KB_FOUR_MODE, "four-zone keyboard four_zone_mode")
 
@@ -201,6 +206,11 @@ def cmd_rgb_effect(args: argparse.Namespace) -> None:
     )
     _write_text(KB_FOUR_MODE, payload + "\n")
     print("OK: effect set")
+
+
+def cmd_rgb_effect_get(_: argparse.Namespace) -> None:
+    _require_path(KB_FOUR_MODE, "four-zone keyboard four_zone_mode")
+    print(_read_text(KB_FOUR_MODE))
 
 
 def cmd_power_get(_: argparse.Namespace) -> None:
@@ -279,6 +289,11 @@ def cmd_fan_auto(_: argparse.Namespace) -> None:
     p = _fan_path()
     _write_text(p, "0,0\n")
     print("OK: fan control set to auto")
+
+
+def cmd_fan_get(_: argparse.Namespace) -> None:
+    p = _fan_path()
+    print(_read_text(p))
 
 
 def cmd_fan_set(args: argparse.Namespace) -> None:
@@ -375,6 +390,9 @@ def build_parser() -> argparse.ArgumentParser:
     )
     per.set_defaults(func=cmd_rgb_per_zone, _parser=per)
 
+    per_get = rgb_sub.add_parser("per-zone-get", help="Print current per-zone colors")
+    per_get.set_defaults(func=cmd_rgb_per_zone_get)
+
     eff = rgb_sub.add_parser(
         "effect",
         help=(
@@ -394,6 +412,9 @@ def build_parser() -> argparse.ArgumentParser:
     eff.add_argument("-d", "--direction", type=int, default=2, help="Direction 1-2")
     eff.add_argument("-c", "--color", help="Color RRGGBB or #RRGGBB (if applicable)")
     eff.set_defaults(func=cmd_rgb_effect, _parser=eff)
+
+    eff_get = rgb_sub.add_parser("effect-get", help="Print current effect settings")
+    eff_get.set_defaults(func=cmd_rgb_effect_get)
 
     # power
     power = sub.add_parser("power", help="Get/list/set ACPI platform_profile")
@@ -441,6 +462,8 @@ def build_parser() -> argparse.ArgumentParser:
     fan = sub.add_parser("fan", help="Fan control")
     fan.set_defaults(func=lambda _args, _parser=fan: _parser.print_help())
     fan_sub = fan.add_subparsers(dest="fan_cmd")
+    fget = fan_sub.add_parser("get", help="Print current fan percentages (CPU,GPU)")
+    fget.set_defaults(func=cmd_fan_get)
     fauto = fan_sub.add_parser("auto", help="Set both fans to auto (0,0)")
     fauto.set_defaults(func=cmd_fan_auto)
     fset = fan_sub.add_parser(
