@@ -1,7 +1,7 @@
 # Nekro-Sense - Driver for the Acer Predator PHN16-72 on Linux.
 
 Nekro-Sense is a heavily changed and adapted fork of Linuwu-Sense specifically targeting the Acer Predator PHN16-72.
-It controls power modes, fan speeds, keyboard RGB, and the backlit logo RGB. It also includes a libadwaita GUI that can be bound to the Predator Sense button on the keyboard.
+It controls power modes, fan speeds, keyboard RGB, and the backlit logo RGB. It also includes GUI options (GTK and egui (rust)) that can be bound to the Predator Sense button on the keyboard.
 
 This README explains how to build, install, and use the driver.
 
@@ -72,7 +72,7 @@ export LD=ld.lld
 Troubleshooting checklist
 
 - Missing headers: ensure you have kernel headers matching `uname -r`.
-- Permission/build errors in `src/`: this often means some files were previously built as root. Fix ownership and clean:
+- Permission/build errors in [src/](src/): this often means some files were previously built as root. Fix ownership and clean:
   ```bash
   sudo chown -R "$USER":"$USER" /path/to/nekro-sense
   make clean
@@ -90,7 +90,7 @@ Troubleshooting checklist
   sudo make LLVM=1 install
   ```
 
-If issues persist, consult distribution docs, kernel build logs, and the code in `tools/` for how the sysfs interface is used. Community PRs and detailed bug reports (with logs and reproduction steps) are the best way to get improvements accepted.
+If issues persist, consult distribution docs, kernel build logs, and the code in [tools/](tools/) for how the sysfs interface is used. Community PRs and detailed bug reports (with logs and reproduction steps) are the best way to get improvements accepted.
 
 What the module exposes
 
@@ -117,7 +117,7 @@ When keyboard control is supported, two interfaces are provided:
 
 Tools and CLI helper
 
-A validated CLI helper is available at `tools/nekroctl.py`. It performs safe reads/writes against the sysfs attributes and validates user input formats before writing. Root privileges are required for write operations.
+A validated CLI helper is available at [tools/nekroctl.py](tools/nekroctl.py). It performs safe reads/writes against the sysfs attributes and validates user input formats before writing. Root privileges are required for write operations.
 
 Common examples:
 
@@ -135,17 +135,31 @@ sudo python3 tools/nekroctl.py battery off
 sudo python3 tools/nekroctl.py keyboard set-zone 1 ff0000,00ff00,0000ff,ffffff
 ```
 
-GUI (GTK4 + libadwaita)
+GUI Options
 
-A lightweight GUI is provided at `tools/nekroctl_gui.py`. It provides pages for keyboard, power, and fans.
+Nekro-Sense provides two GUI options to control your hardware:
 
-Run with Python 3 and the required GUI bindings installed (examples vary by distro; look for `python3-gi` and libadwaita/bindings):
+### GTK4 + libadwaita (Python)
+A feature-rich GUI located at [tools/nekroctl_gui.py](tools/nekroctl_gui.py). It follows the system theme and is ideal for desktop environments like GNOME or KDE.
 
+**Run:**
 ```bash
 python3 tools/nekroctl_gui.py
 ```
+*Requires `python3-gi` and libadwaita bindings.*
 
-You can start on a specific page:
+### egui (Rust)
+A high-performance, lightweight GUI located in [tools/nekroctl-gui-rs/](tools/nekroctl-gui-rs/). While it does not follow the system theme, it is extremely fast and efficient, making it the preferred choice for Tiling Window Managers (TWMs).
+
+**Build and Run:**
+```bash
+cd tools/nekroctl-gui-rs
+cargo build --release
+./target/release/nekroctl-gui-rs
+```
+*Requires Rust toolchain.*
+
+Both GUIs support starting on specific pages using flags:
 
 - `-k` / `--keyboard` - open on the RGB page (default)
 - `-p` / `--power` - open on the Power page
@@ -153,7 +167,7 @@ You can start on a specific page:
 
 Usage examples and low-level operations
 
-For exact, low-level read/write examples, inspect `tools/nekroctl.py`. Example raw sysfs reads/writes (for experienced users):
+For exact, low-level read/write examples, inspect [tools/nekroctl.py](tools/nekroctl.py). Example raw sysfs reads/writes (for experienced users):
 
 ```bash
 # Read a sysfs attribute
