@@ -21,6 +21,17 @@ fn color_to_hex(color: egui::Color32) -> String {
 }
 
 fn main() -> eframe::Result {
+    let mut initial_page = Page::Keyboard;
+    let args: Vec<String> = std::env::args().collect();
+    for arg in args {
+        match arg.as_str() {
+            "-k" | "--keyboard" => initial_page = Page::Keyboard,
+            "-p" | "--power" => initial_page = Page::Power,
+            "-f" | "--fans" => initial_page = Page::Fans,
+            _ => {}
+        }
+    }
+
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_inner_size([720.0, 600.0])
@@ -30,10 +41,10 @@ fn main() -> eframe::Result {
     eframe::run_native(
         "Nekro Sense",
         options,
-        Box::new(|cc| {
+        Box::new(move |cc| {
             // This gives us image support:
             egui_extras::install_image_loaders(&cc.egui_ctx);
-            Ok(Box::new(NekroApp::new(cc)))
+            Ok(Box::new(NekroApp::new(cc, initial_page)))
         }),
     )
 }
@@ -92,9 +103,9 @@ struct PendingCommand {
 }
 
 impl NekroApp {
-    fn new(_cc: &eframe::CreationContext<'_>) -> Self {
+    fn new(_cc: &eframe::CreationContext<'_>, initial_page: Page) -> Self {
         let mut app = Self {
-            current_page: Page::Keyboard,
+            current_page: initial_page,
             status_msg: "Ready".to_string(),
             is_error: false,
 
