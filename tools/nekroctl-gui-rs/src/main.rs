@@ -281,6 +281,10 @@ impl NekroApp {
 
 impl eframe::App for NekroApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if ctx.input(|i| i.key_pressed(egui::Key::Escape) || i.key_pressed(egui::Key::Q)) {
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+        }
+
         // Handle pending command
         if let Some(pending) = self.pending_command.take() {
             if let Some((ok, msg)) = pending.promise.ready() {

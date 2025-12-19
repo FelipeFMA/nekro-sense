@@ -33,7 +33,8 @@ try:
 
     gi.require_version("Gtk", "4.0")
     gi.require_version("Adw", "1")
-    from gi.repository import Adw, Gtk, Gio, GLib
+    gi.require_version("Gdk", "4.0")
+    from gi.repository import Adw, Gtk, Gio, GLib, Gdk
 except Exception as e:
     sys.stderr.write(
         f"Failed to import GTK4/libadwaita Python bindings: {e}\n"
@@ -266,6 +267,11 @@ class LinuwuApp(Adw.Application):
         win.set_title("Nekro Sense")
         win.set_default_size(720, 560)
 
+        # Close on Esc or q
+        key_controller = Gtk.EventControllerKey()
+        key_controller.connect("key-pressed", self._on_key_pressed)
+        win.add_controller(key_controller)
+
         # Header and status
         header = Adw.HeaderBar()
         # App menu + global refresh button
@@ -400,6 +406,12 @@ class LinuwuApp(Adw.Application):
         win.set_content(vbox)
         win.present()
         notifier.info("Ready")
+
+    def _on_key_pressed(self, _controller, keyval, _keycode, _state):
+        if keyval == Gdk.KEY_Escape or keyval == Gdk.KEY_q or keyval == Gdk.KEY_Q:
+            self.quit()
+            return True
+        return False
 
     # RGB page
     def _build_rgb_page(
