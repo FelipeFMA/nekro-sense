@@ -3504,11 +3504,38 @@ enum acer_wmi_predator_v4_oc {
      pr_info("boot_animation_sound set status: %llu\n",result);
      return count;
  }
+
+/*
+ * LIGHTING RESET CONTROL
+ * Calls Method 2 (SetGamingLED) to attempt to un-brick/reset the lighting controller.
+ */
+static ssize_t predator_lighting_reset_store(struct device *dev, struct device_attribute *attr, const char *buf, size_t count){
+    acpi_status status;
+    u64 result;
+    u8 val;
+    
+    if (sscanf(buf, "%hhd", &val) != 1)
+        return -EINVAL;
+
+    pr_info("Attempting lighting reset (Method 2) with value: %d\n", val);
+    
+    /* Method 2: SetGamingLED. Valid values unknown, official driver likely uses 1 to enable. */
+    status = WMI_gaming_execute_u64(ACER_WMID_SET_GAMING_LED_METHODID, (u64)val, &result);
+    
+    if(ACPI_FAILURE(status)){
+        pr_err("Error performing lighting reset: %s\n", acpi_format_exception(status));
+        return -ENODEV;
+    }
+    
+    pr_info("Lighting reset result: %llu\n", result);
+    return count;
+}
  
  /*
   * predator sense attributes
   */
  static struct device_attribute boot_animation_sound = __ATTR(boot_animation_sound, 0644, predator_boot_animation_sound_show, predator_boot_animation_sound_store);
+static struct device_attribute lighting_reset = __ATTR(lighting_reset, 0200, NULL, predator_lighting_reset_store); /* Write-only */
  static struct device_attribute backlight_timeout = __ATTR(backlight_timeout, 0644, predator_backlight_timeout_show, predator_backlight_timeout_store);
  static struct device_attribute usb_charging = __ATTR(usb_charging, 0644, predator_usb_charging_show, predator_usb_charging_store);
  static struct device_attribute battery_calibration = __ATTR(battery_calibration, 0644, predator_battery_calibration_show, preadtor_battery_calibration_store);
@@ -3517,6 +3544,7 @@ enum acer_wmi_predator_v4_oc {
  static struct device_attribute lcd_override = __ATTR(lcd_override, 0644, predator_lcd_override_show, predator_lcd_override_store);
  static struct attribute *predator_sense_attrs[] = {
      &lcd_override.attr,
+    &lighting_reset.attr,
      &fan_speed.attr,
      &battery_limiter.attr,
      &battery_calibration.attr,
