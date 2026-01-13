@@ -4195,9 +4195,42 @@ static const struct attribute_group back_logo_attr_group = {
   * Platform device
   */
  
- static int acer_platform_probe(struct platform_device *device)
- {
-     int err;
+static void acer_gaming_init_lighting(void)
+{
+    acpi_status status;
+    /* 
+     * Windows WMI verification confirms proper payload size is 16 bytes.
+     * 8-byte (u64) payloads are rejected with "Invalid Parameter".
+     * Structure is likely u128 or specific struct with padding.
+     * Value 1 starts the engine.
+     */
+    u8 enable_cmd[16] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    struct acpi_buffer input = { sizeof(enable_cmd), enable_cmd };
+    struct acpi_buffer output = { ACPI_ALLOCATE_BUFFER, NULL };
+
+    /*
+     * The official Windows driver sends a SetGamingLED(1) command 
+     * during service startup (boot) and likely on resume.
+     * This appears to be required to "unbrick" or enable the RGB controller
+     * if the BIOS disabled it (e.g. on AC plug event during boot).
+     */
+    if (has_cap(ACER_CAP_PREDATOR_SENSE)) {
+        status = wmi_evaluate_method(WMID_GUID4, 0, ACER_WMID_SET_GAMING_LED_METHODID, &input, &output);
+        if (ACPI_FAILURE(status))
+            pr_warn("Failed to enable Gaming LED engine: %s\n", acpi_format_exception(status));
+        else {
+            pr_debug("Gaming LED engine enabled (WMI fix applied)\n");
+            kfree(output.pointer);
+        }
+    }
+}
+
+static int acer_platform_probe(struct platform_device *device)
+{
+    int err;
+
+    /* Initialize lighting engine to fix potential bricked state from BIOS */
+    acer_gaming_init_lighting();
 
      if (has_cap(ACER_CAP_PLATFORM_PROFILE)) {
          err = acer_platform_profile_setup(device);
@@ -4257,6 +4290,8 @@ static const struct attribute_group back_logo_attr_group = {
  
  static int acer_resume(struct device *dev)
  {
+     /* Re-initialize lighting on resume to prevent bricked state */
+     acer_gaming_init_lighting();
      return 0;
  }
  #else
