@@ -16,7 +16,7 @@ Key goals:
 
 ## Scope, support, and safety
 
-- Hardware scope: Acer Predator PHN16‑72 only. The module is DMI‑gated where behavior is model‑specific.
+- Hardware scope: Acer Predator PHN16‑72 only. The driver now assumes WMID v2 and no longer includes legacy AMW0/WMID‑v1 paths or multi‑model DMI tables.
 - OS scope: Primary development and testing on Arch Linux; other distros may work but are not guaranteed.
 - Safety: The driver interacts with low-level firmware methods. Use at your own risk.
 
@@ -45,10 +45,10 @@ sudo systemctl reboot
 
 Kernel module: `src/nekro_sense.c`
 
-- Registers as an Acer WMI platform driver
-- Calls vendor WMI methods (WMID GUIDs) for Predator/Nitro features
+- Registers as an Acer WMI platform driver (PHN16‑72‑only path)
+- Calls vendor WMI methods (WMID GUIDs) for Predator Sense v4 features
 - Exposes sysfs groups for RGB, fans, battery, and platform profiles
-- DMI-gates PHN16‑72‑specific features (e.g. back‑logo)
+- Uses a fixed PHN16‑72 quirk profile for feature gating
 
 User space:
 
@@ -216,31 +216,6 @@ Notable implementation details:
 - **RGB keyboard**: supports effect modes via a 16‑byte payload, and per‑zone static colors via a 4‑byte buffer per zone.
 - **Back logo**: uses a dedicated setter/getter (`0x0C/0x0D`) and a unified 0x14 fallback to ensure the power gate is honored.
 - **Persistent state**: saves and restores profile + fan + RGB state on AC events and module unload/load.
-
-## Code improvement opportunities
-
-These are practical, code‑specific improvements discovered during review:
-
-1. **File I/O in kernel space**
-   - The driver writes `/etc/predator_state` and `/etc/four_zone_kb_state` from kernel space. This is discouraged in upstream kernel practice. A safer design is to move persistence to user space (e.g., systemd service using the CLI), or use dedicated sysfs entries plus a userspace helper.
-
-2. **Error handling for `filp_open`**
-   - In `four_zone_kb_state_save()` the code checks `if (!file)` after `filp_open()`. Kernel APIs return `ERR_PTR` on failure, so this should use `IS_ERR()` to avoid treating error pointers as valid.
-
-3. **Concurrency and shared state**
-   - `cpu_fan_speed`, `gpu_fan_speed`, `current_states`, and `current_kb_state` are global and accessed in sysfs store/show paths without locks. A mutex (or spinlock where appropriate) would prevent race conditions when multiple writes or AC events occur concurrently.
-
-4. **Sysfs output helpers**
-   - Several show handlers use `sprintf` directly. Kernel best practice is to use `sysfs_emit()` to avoid buffer overruns and standardize return lengths.
-
-5. **Input parsing robustness**
-   - Several sysfs store handlers use fixed‑size buffers and manual `strncpy`/`strsep` parsing. Using `kstrtoint_from_user()` or `sysfs` helpers would avoid silent truncation and make errors more precise.
-
-6. **Magic numbers**
-   - Fan behavior values and USB charging command values are hard‑coded inline. Replacing these with named constants and adding documentation would increase readability and maintainability.
-
-7. **Monolithic kernel file**
-   - `src/nekro_sense.c` contains multiple subsystems in a single file. Splitting into logical modules (WMI core, RGB, fans, power profiles, sysfs glue) would make future changes safer and more reviewable.
 
 ## Troubleshooting checklist
 
