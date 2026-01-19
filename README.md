@@ -1,13 +1,28 @@
-# Nekro-Sense - Driver for the Acer Predator PHN16-72 on Linux.
+# Nekro-Sense — Linux driver and tooling for Acer Predator PHN16-72
 
-Nekro-Sense is a heavily changed and adapted fork of Linuwu-Sense specifically targeting the Acer Predator PHN16-72.
-It controls power modes, fan speeds, keyboard RGB, and the backlit logo RGB. It also includes GUI options (GTK and egui (rust)) that can be bound to the Predator Sense button on the keyboard.
+Nekro-Sense is a heavily adapted fork of Linuwu-Sense that targets the Acer Predator Helios Neo PHN16-72. It adds native Linux support for platform power profiles, fans, keyboard RGB (four-zone), and the back-lid logo/lightbar. The project consists of a kernel module that exposes a clean sysfs API plus user-space CLI and GUI tools.
 
-This README explains how to build, install, and use the driver.
+This README is the full, consolidated technical documentation (it replaces the standalone docs file).
 
-#### IMPORTANT: GPU PERFORMANCE
+## Executive summary (project purpose)
 
-To achieve maximum GPU performance on the Acer Predator PHN16-72 you MUST install the `nvidia-open` drivers and enable the `nvidia-powerd` service. The discrete NVIDIA GPU is locked to an 80W power limit by default; enabling `nvidia-powerd` raises the power limit to 140W so the GPU can run at full performance.
+The project’s purpose is to provide first‑class Linux support for hardware features that are otherwise gated behind OEM Windows utilities. It does that by using the same ACPI/WMI firmware interfaces the OEM tooling uses, but with a transparent, auditable implementation that runs with minimal overhead and no background services.
+
+Key goals:
+
+- Enable official‑like feature parity on Linux without proprietary services.
+- Keep all firmware interaction explicit, minimal, and device‑gated.
+- Provide a stable sysfs API and scriptable CLI to integrate with Linux workflows.
+
+## Scope, support, and safety
+
+- Hardware scope: Acer Predator PHN16‑72 only. The module is DMI‑gated where behavior is model‑specific.
+- OS scope: Primary development and testing on Arch Linux; other distros may work but are not guaranteed.
+- Safety: The driver interacts with low-level firmware methods. Use at your own risk.
+
+## IMPORTANT: GPU PERFORMANCE (PHN16‑72)
+
+To achieve maximum GPU performance on the Acer Predator PHN16‑72 you must install the `nvidia-open` drivers and enable the `nvidia-powerd` service. The discrete NVIDIA GPU is locked to an 80W power limit by default; enabling `nvidia-powerd` raises the limit to ~140W for full performance.
 
 Example (Arch Linux):
 
@@ -17,51 +32,113 @@ sudo systemctl enable nvidia-powerd.service
 sudo systemctl reboot
 ```
 
-Important scope and support notes
-- Hardware focus: Acer Predator PHN16-72 only. The driver was developed and tested specifically on this model.
-- OS scope: Primary development and testing has been on Arch Linux. The module will often work on other mainstream Linux distributions with standard kernels and headers, but other distros are not actively tested here.
-- Support: This is a small, purpose-driven repository. Expect limited support; community contributions and clear PRs are the best path for improvements.
-- Safety: The driver interacts with low-level WMI/ACPI interfaces. Use at your own risk - the author disclaims liability for hardware damage or data loss.
+## Features
 
-Quick install
+- Four‑zone keyboard RGB (static per-zone + effects)
+- Back‑lid logo/lightbar RGB with brightness and power
+- Fan control (auto + manual CPU/GPU)
+- Platform performance profiles via ACPI `platform_profile`
+- Battery limiter (80% cap) and calibration hooks
+- Optional USB charging toggle, LCD override, boot animation sound controls
 
-1. Make sure kernel headers for your currently running kernel are installed.
-   - Arch example: `sudo pacman -S linux-headers`
-   - Debian/Ubuntu example: `sudo apt install linux-headers-"$(uname -r)"`
+## Architecture at a glance
 
-2. Build and install the module:
+Kernel module: `src/nekro_sense.c`
 
-   ```bash
-   git clone https://github.com/FelipeFMA/nekro-sense.git
-   cd nekro-sense
-   make install
-   ```
+- Registers as an Acer WMI platform driver
+- Calls vendor WMI methods (WMID GUIDs) for Predator/Nitro features
+- Exposes sysfs groups for RGB, fans, battery, and platform profiles
+- DMI-gates PHN16‑72‑specific features (e.g. back‑logo)
 
-   The `make install` target will attempt to remove the stock `acer_wmi` module (if loaded) and install the Nekro-Sense module.
+User space:
 
-3. To remove the installed module:
+- CLI: `tools/nekroctl.py` — validated read/write to sysfs
+- GTK GUI: `tools/nekroctl_gui.py` — libadwaita frontend calling the CLI
+- Rust GUI: `tools/nekroctl-gui-rs` — egui client for lightweight environments
 
-   ```bash
-   make uninstall
-   ```
+## Reverse‑engineering methodology (summary)
 
-Build toolchain note (Clang vs GCC)
+1. Extract ACPI tables (read‑only): `acpidump` → `acpixtract` → `iasl -d`.
+2. Identify the WMID dispatcher and GUIDs used for gaming/lighting features.
+3. Derive method semantics and payload layouts by tracing ASL.
+4. Validate with conservative getters before applying setters.
+5. Implement with strict size checks, gating by DMI, and defensive error handling.
 
-Some distributions build kernels with Clang/LLVM. Building an out-of-tree module with GCC against a Clang-built kernel may surface errors like:
+## Firmware interface details (PHN16‑72)
 
-- `gcc: error: unrecognized command-line option ‘-mretpoline-external-thunk’`
-- `gcc: error: unrecognized command-line option ‘-fsplit-lto-unit’`
-- `gcc: error: unrecognized command-line option ‘-mllvm’`
+- WMID GUID (lighting/game features): `7A4DDFE7-5B5D-40B4-8595-4408E0CC7F56`
+- Dispatcher: `WMBH`
+- Keyboard (4‑zone):
+  - Set: Arg1 `0x14` (unified) with selector `1`
+  - Get: Arg1 `0x15` with selector `1`
+- Back‑logo/lightbar:
+  - Preferred set: Arg1 `0x0C` (RGB + brightness + enable)
+  - Preferred get: Arg1 `0x0D`
+  - Some firmware gates power via Arg1 `0x14` (selector `2`), so the driver drives both paths
 
-If you encounter these, build using the kernel's LLVM toolchain:
+## Sysfs API (primary interface)
+
+Base path (typical):
+
+```
+/sys/module/nekro_sense/drivers/platform:acer-wmi/acer-wmi
+```
+
+Common groups:
+
+- `predator_sense/`
+  - `fan_speed` — `CPU%,GPU%` (0 = auto)
+  - `battery_limiter` — `0/1`
+  - `battery_calibration` — `0/1`
+  - `usb_charging` — `0/10/20/30`
+  - `backlight_timeout`
+  - `boot_animation_sound`
+  - `lcd_override`
+
+- `four_zoned_kb/`
+  - `per_zone_mode` — `RRGGBB,RRGGBB,RRGGBB,RRGGBB,brightness`
+  - `four_zone_mode` — `mode,speed,brightness,direction,R,G,B`
+
+- `back_logo/`
+  - `color` — `RRGGBB,brightness,enable`
+
+Platform profile (standard ACPI interface):
+
+```
+/sys/firmware/acpi/platform_profile
+/sys/firmware/acpi/platform_profile_choices
+```
+
+## Build and install
+
+1. Install kernel headers for your running kernel.
+   - Arch: `sudo pacman -S linux-headers`
+   - Debian/Ubuntu: `sudo apt install linux-headers-"$(uname -r)"`
+
+2. Build and install:
 
 ```bash
-# Build with Clang/LLVM to match the kernel toolchain
+git clone https://github.com/FelipeFMA/nekro-sense.git
+cd nekro-sense
+make install
+```
+
+3. Remove:
+
+```bash
+make uninstall
+```
+
+### Toolchain note (Clang vs GCC)
+
+If the kernel was built with Clang/LLVM, build the module with LLVM:
+
+```bash
 make LLVM=1
 sudo make LLVM=1 install
 ```
 
-You can also export these for your shell/session:
+Or export:
 
 ```bash
 export LLVM=1
@@ -69,134 +146,133 @@ export CC=clang
 export LD=ld.lld
 ```
 
-Troubleshooting checklist
+## CLI usage (nekroctl)
 
-- Missing headers: ensure you have kernel headers matching `uname -r`.
-- Permission/build errors in [src/](src/): this often means some files were previously built as root. Fix ownership and clean:
+Validated CLI helper: `tools/nekroctl.py`.
+
+Examples:
+
+```bash
+# Battery limiter
+sudo python3 tools/nekroctl.py battery get
+sudo python3 tools/nekroctl.py battery on
+sudo python3 tools/nekroctl.py battery off
+
+# Fans
+sudo python3 tools/nekroctl.py fan auto
+sudo python3 tools/nekroctl.py fan set --cpu 35 --gpu 40
+
+# Keyboard
+sudo python3 tools/nekroctl.py rgb per-zone ff0000 00ff00 0000ff ffffff -b 60
+sudo python3 tools/nekroctl.py rgb effect wave -s 2 -b 80 -d 2 -c ff00ff
+
+# Back logo
+sudo python3 tools/nekroctl.py logo set ff6600 -b 70 --on
+```
+
+## GUI options
+
+### GTK4 + libadwaita (Python)
+
+`tools/nekroctl_gui.py` — theme‑aware GUI that calls the CLI and uses sudo/pkexec for privileged writes.
+
+Run:
+
+```bash
+python3 tools/nekroctl_gui.py
+```
+
+### egui (Rust)
+
+`tools/nekroctl-gui-rs/` — fast, lightweight GUI for TWMs.
+
+```bash
+cd tools/nekroctl-gui-rs
+cargo build --release
+./target/release/nekroctl-gui-rs
+```
+
+## State persistence (kernel-side)
+
+The module persists thermal/fan state and keyboard state across AC changes and reboots using files:
+
+- `/etc/predator_state`
+- `/etc/four_zone_kb_state`
+
+This is intentionally minimal and avoids daemons. See “Code improvement opportunities” below for safer alternatives.
+
+## Deep code analysis (what the code actually does)
+
+At a high level, `src/nekro_sense.c` integrates three layers:
+
+1. **WMI/ACPI transport layer** — wraps vendor WMID calls, validates buffers, and surfaces errors in kernel logs.
+2. **Feature controllers** — fan control, thermal profile toggling, RGB control, battery limiter, and peripheral toggles.
+3. **Sysfs API layer** — exposes user‑friendly file interfaces that can be consumed by CLI/GUI tools.
+
+Notable implementation details:
+
+- **Fan control**: `acer_set_fan_speed()` translates CPU/GPU percentages into firmware commands and sets fan behavior (auto/max/custom) before applying speeds.
+- **Platform profile**: `acer_predator_v4_platform_profile_*()` maps between ACPI `platform_profile` options and firmware profile IDs, with AC‑power gating for unsupported modes.
+- **RGB keyboard**: supports effect modes via a 16‑byte payload, and per‑zone static colors via a 4‑byte buffer per zone.
+- **Back logo**: uses a dedicated setter/getter (`0x0C/0x0D`) and a unified 0x14 fallback to ensure the power gate is honored.
+- **Persistent state**: saves and restores profile + fan + RGB state on AC events and module unload/load.
+
+## Code improvement opportunities
+
+These are practical, code‑specific improvements discovered during review:
+
+1. **File I/O in kernel space**
+   - The driver writes `/etc/predator_state` and `/etc/four_zone_kb_state` from kernel space. This is discouraged in upstream kernel practice. A safer design is to move persistence to user space (e.g., systemd service using the CLI), or use dedicated sysfs entries plus a userspace helper.
+
+2. **Error handling for `filp_open`**
+   - In `four_zone_kb_state_save()` the code checks `if (!file)` after `filp_open()`. Kernel APIs return `ERR_PTR` on failure, so this should use `IS_ERR()` to avoid treating error pointers as valid.
+
+3. **Concurrency and shared state**
+   - `cpu_fan_speed`, `gpu_fan_speed`, `current_states`, and `current_kb_state` are global and accessed in sysfs store/show paths without locks. A mutex (or spinlock where appropriate) would prevent race conditions when multiple writes or AC events occur concurrently.
+
+4. **Sysfs output helpers**
+   - Several show handlers use `sprintf` directly. Kernel best practice is to use `sysfs_emit()` to avoid buffer overruns and standardize return lengths.
+
+5. **Input parsing robustness**
+   - Several sysfs store handlers use fixed‑size buffers and manual `strncpy`/`strsep` parsing. Using `kstrtoint_from_user()` or `sysfs` helpers would avoid silent truncation and make errors more precise.
+
+6. **Magic numbers**
+   - Fan behavior values and USB charging command values are hard‑coded inline. Replacing these with named constants and adding documentation would increase readability and maintainability.
+
+7. **Monolithic kernel file**
+   - `src/nekro_sense.c` contains multiple subsystems in a single file. Splitting into logical modules (WMI core, RGB, fans, power profiles, sysfs glue) would make future changes safer and more reviewable.
+
+## Troubleshooting checklist
+
+- Missing headers: ensure kernel headers match `uname -r`.
+- Permission/build errors in src/: fix ownership and clean:
   ```bash
   sudo chown -R "$USER":"$USER" /path/to/nekro-sense
   make clean
   ```
-  If files have immutable attributes (rare), clear them:
-  ```bash
-  lsattr -R src
-  sudo chattr -i src/*   # only if an 'i' immutable attribute is present
-  make clean
-  ```
-- Module conflicts: if the stock `acer_wmi` is loaded, remove it before installing:
+- Module conflicts: remove stock `acer_wmi` before install:
   ```bash
   sudo modprobe -r acer_wmi
   sudo modprobe -r wmi
   sudo make LLVM=1 install
   ```
 
-If issues persist, consult distribution docs, kernel build logs, and the code in [tools/](tools/) for how the sysfs interface is used. Community PRs and detailed bug reports (with logs and reproduction steps) are the best way to get improvements accepted.
+## Roadmap
 
-What the module exposes
+- Optional per‑segment logo control via `0x06/0x07`
+- Packaging for major distributions
+- Additional models via DMI‑gated contributions
 
-When the firmware supports the features, the module creates sysfs entries providing control for platform-specific functionality such as:
+## Contributing
 
-- Thermal/power profiles (ACPI platform profile)
-- Four-zone keyboard backlight (per-zone static colors and effects)
-- Fan control and manual fan speed settings
-- Battery charge-limiter (80% cap) and calibration hooks
-- LCD override and USB charging toggles (where available)
+- Keep the scope focused on PHN16‑72 unless you add clear DMI‑gated support for other models.
+- Keep PRs small and explain the firmware evidence when adding new methods.
+- Update user‑space tools and README when sysfs behavior changes.
 
-Example sysfs paths (these are typical; exact paths may vary by kernel and load order):
-- Nekro-Sense path used here:
-  `/sys/module/nekro_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense`
-- Legacy Nitro example:
-  `/sys/module/nekro_sense/drivers/platform:acer-wmi/acer-wmi/nitro_sense`
+## License and liability
 
-Keyboard RGB (four-zone)
+GPLv3. No warranty. Use at your own risk.
 
-When keyboard control is supported, two interfaces are provided:
+## Acknowledgments
 
-- `per_zone_mode` - set static RGB per zone (comma-separated hex values and brightness)
-- `four_zone_mode` - set effect modes and parameters (mode, speed, brightness, direction, RGB)
-
-Tools and CLI helper
-
-A validated CLI helper is available at [tools/nekroctl.py](tools/nekroctl.py). It performs safe reads/writes against the sysfs attributes and validates user input formats before writing. Root privileges are required for write operations.
-
-Common examples:
-
-```bash
-# Read battery limiter state (1 = ~80% limit enabled, 0 = disabled)
-sudo python3 tools/nekroctl.py battery get
-
-# Enable 80% battery limiter
-sudo python3 tools/nekroctl.py battery on
-
-# Disable 80% battery limiter
-sudo python3 tools/nekroctl.py battery off
-
-# Set keyboard zones using a helper (example format validated by the CLI)
-sudo python3 tools/nekroctl.py keyboard set-zone 1 ff0000,00ff00,0000ff,ffffff
-```
-
-GUI Options
-
-Nekro-Sense provides two GUI options to control your hardware:
-
-### GTK4 + libadwaita (Python)
-A feature-rich GUI located at [tools/nekroctl_gui.py](tools/nekroctl_gui.py). It follows the system theme and is ideal for desktop environments like GNOME or KDE.
-
-**Run:**
-```bash
-python3 tools/nekroctl_gui.py
-```
-*Requires `python3-gi` and libadwaita bindings.*
-
-### egui (Rust)
-A high-performance, lightweight GUI located in [tools/nekroctl-gui-rs/](tools/nekroctl-gui-rs/). While it does not follow the system theme, it is extremely fast and efficient, making it the preferred choice for Tiling Window Managers (TWMs).
-
-**Build and Run:**
-```bash
-cd tools/nekroctl-gui-rs
-cargo build --release
-./target/release/nekroctl-gui-rs
-```
-*Requires Rust toolchain.*
-
-Both GUIs support starting on specific pages using flags:
-
-- `-k` / `--keyboard` - open on the RGB page (default)
-- `-p` / `--power` - open on the Power page
-- `-f` / `--fans` - open on the Fans page
-
-Usage examples and low-level operations
-
-For exact, low-level read/write examples, inspect [tools/nekroctl.py](tools/nekroctl.py). Example raw sysfs reads/writes (for experienced users):
-
-```bash
-# Read a sysfs attribute
-cat /sys/module/nekro_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/battery_limiter
-
-# Write to a sysfs attribute (careful: root required)
-echo 1 | sudo tee /sys/module/nekro_sense/drivers/platform:acer-wmi/acer-wmi/predator_sense/battery_limiter
-```
-
-Contributing
-
-Contributions are welcome and appreciated. To keep the repository focused and stable:
-
-- Please target the PHN16-72 hardware unless you provide clear, tested compatibility for other models.
-- Keep changes minimal and well-justified: prefer clear, small PRs over broad refactors unless unavoidable.
-- Include test steps and reproduction information for any behavior changes.
-- Update documentation and tools when sysfs attributes or user-facing behavior changes.
-
-License and liability
-
-This project is licensed under the GNU General Public License v3 (GPLv3). Use the software at your own risk; there is no warranty and the author disclaims liability for damages.
-
-Acknowledgments
-
-- Original Linuwu-Sense work provided the foundation and many implementation ideas. Nekro-Sense has diverged substantially and is maintained separately with PHN16-72 as the central target.
-
-Contact and reporting
-
-- The most effective way to improve the project is via pull requests with tests and clear rationale.
-- If you open an issue, include hardware revision, kernel version (output of `uname -a`), distribution, and a short description of the problem and steps to reproduce.
-
-Thank you for using Nekro-Sense. Contributions, feedback, and well-formed issues are what keep hardware projects like this working well across kernel and firmware changes.
+- Linuwu‑Sense provided foundational ideas and patterns. Nekro‑Sense has diverged substantially to support PHN16‑72.
