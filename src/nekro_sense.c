@@ -1936,22 +1936,48 @@ fallback_unified:
          return -ENODEV;
      }
 
+    /*
+     * Vital Fix: The Predator Sense "Reset" function (and boot/resume) always calls
+     * SetGamingLED(1) before sending per-zone colors. This "wakes up" or resets
+     * the RGB controller to ensure it accepts the new color data.
+     * Without this, the keyboard may become partially unresponsive or "stuck".
+     */
+     if (has_cap(ACER_CAP_PREDATOR_SENSE)) {
+        u8 enable_cmd[16] = {1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+        struct acpi_buffer input_buf = { sizeof(enable_cmd), enable_cmd };
+        struct acpi_buffer output_buf = { ACPI_ALLOCATE_BUFFER, NULL };
+
+        status = wmi_evaluate_method(WMID_GUID4, 0, ACER_WMID_SET_GAMING_LED_METHODID, &input_buf, &output_buf);
+        if (ACPI_FAILURE(status)) {
+            pr_warn("Failed to wake up Gaming LED engine: %s\n", acpi_format_exception(status));
+            /* Continue anyway, as it might just be already active or not supported on some FW */
+        } else {
+            kfree(output_buf.pointer);
+        }
+     }
+
      for (int i = 0; i < 4; i++) {
          u64 v = zone_vals[i] & 0xFFFFFFULL; /* RRGGBB */
-         struct ls_led_zone_set_param p = {
-             .zone = zone_ids[i],
-             .red = (u8)((v >> 16) & 0xFF),
-             .green = (u8)((v >> 8) & 0xFF),
-             .blue = (u8)(v & 0xFF),
-         };
-         struct acpi_buffer in = { (acpi_size)sizeof(p), (void *)&p };
+        /* Method id 6 expects a u64 (8 bytes). Pad the struct to 8 bytes. */
+        u64 payload = 0;
+        /*
+         * Construct payload: 0x00BBGGRRZZ (Little Endian in memory: ZZ RR GG BB 00 00 00 00)
+         * Struct is {zone, red, green, blue} -> 4 bytes
+         */
+        struct ls_led_zone_set_param *p = (struct ls_led_zone_set_param *)&payload;
+        p->zone = zone_ids[i];
+        p->red = (u8)((v >> 16) & 0xFF);
+        p->green = (u8)((v >> 8) & 0xFF);
+        p->blue = (u8)(v & 0xFF);
 
-         /* Method id 6 under WMID_GUID4 */
-         status = wmi_evaluate_method(WMID_GUID4, 0, ACER_WMID_SET_GAMING_RGB_KB_METHODID, &in, NULL);
-         if (ACPI_FAILURE(status)) {
-             pr_err("Error setting KB color (zone %d): %s\n", i + 1, acpi_format_exception(status));
-             return status;
-         }
+        struct acpi_buffer in = { sizeof(u64), &payload };
+
+        /* Method id 6 under WMID_GUID4 */
+        status = wmi_evaluate_method(WMID_GUID4, 0, ACER_WMID_SET_GAMING_RGB_KB_METHODID, &in, NULL);
+        if (ACPI_FAILURE(status)) {
+            pr_err("Error setting KB color (zone %d): %s\n", i + 1, acpi_format_exception(status));
+            return status;
+        }
      }
 
      /* Mark state as per-zone */
@@ -2226,12 +2252,31 @@ static void acer_gaming_init_lighting(void)
      * if the BIOS disabled it (e.g. on AC plug event during boot).
      */
     if (has_cap(ACER_CAP_PREDATOR_SENSE)) {
+        /* 
+         * Try standard Method 2 (Gaming LED) with 16-byte payload 
+         */
         status = wmi_evaluate_method(WMID_GUID4, 0, ACER_WMID_SET_GAMING_LED_METHODID, &input, &output);
         if (ACPI_FAILURE(status))
-            pr_warn("Failed to enable Gaming LED engine: %s\n", acpi_format_exception(status));
+            pr_warn("Failed to enable Gaming LED engine (Method 2): %s\n", acpi_format_exception(status));
         else {
-            pr_debug("Gaming LED engine enabled (WMI fix applied)\n");
+            pr_debug("Gaming LED engine enabled (Method 2)\n");
             kfree(output.pointer);
+        }
+
+        /* 
+         * Try Method 6 (Gaming RGB KB) with 8-byte payload of '1'
+         * Uncovered via WMI tracing of official driver service.
+         */
+        u64 magic = 1;
+        struct acpi_buffer input6 = { sizeof(u64), &magic };
+        struct acpi_buffer output6 = { ACPI_ALLOCATE_BUFFER, NULL };
+        
+        status = wmi_evaluate_method(WMID_GUID4, 0, ACER_WMID_SET_GAMING_RGB_KB_METHODID, &input6, &output6);
+        if (ACPI_FAILURE(status))
+             pr_warn("Failed to init Gaming RGB KB (Method 6): %s\n", acpi_format_exception(status));
+        else {
+             pr_info("Predator Sense: Gaming RGB KB initialized (Method 6, val=1)\n");
+             kfree(output6.pointer);
         }
     }
 }
